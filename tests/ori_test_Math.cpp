@@ -1,13 +1,14 @@
 #include "../testing/OriTestBase.h"
 #include "../core/OriFloatingPoint.h"
 
-#ifdef Q_OS_MACOS
 #include <cmath>
+
+#ifdef Q_OS_MACOS
 #define __isnan std::isnan
 #endif
 
 namespace Ori {
-namespace Test {
+namespace Tests {
 namespace MathTests {
 
 TEST_METHOD(learn_nan)
@@ -119,7 +120,7 @@ TEST_METHOD(invalid_sqrt)
     ASSERT_IS_TRUE(std::isnan(sqrt(-1/0.0)));
 }
 
-////////////////////////////////////////////////////////////////////////////////
+//------------------------------------------------------------------------------
 
 TEST_GROUP("Math",
     ADD_TEST(learn_nan),
@@ -129,5 +130,5 @@ TEST_GROUP("Math",
 )
 
 } // namespace MathTests
-} // namespace Test
+} // namespace Tests
 } // namespace Ori

@@ -7,7 +7,6 @@
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QIcon>
-#include <QInputDialog>
 #include <QLabel>
 #include <QStyle>
 #include <QMessageBox>
@@ -15,58 +14,152 @@
 namespace Ori {
 namespace Dlg {
 
+namespace Mock {
+
+static bool isActive = false;
+static DialogKind lastDialog = DialogKind::none;
+static int nextResult = QMessageBox::StandardButton::NoButton;
+
+void setActive(bool on) { isActive = on; }
+void resetLastDialog() { lastDialog = DialogKind::none; }
+DialogKind getLastDialog() { return lastDialog; }
+void setNextResult(int res) { nextResult = res; }
+
+} // namespace Mock
+
 void info(const QString& msg)
 {
+    if (Mock::isActive)
+    {
+        Mock::lastDialog = Mock::DialogKind::info;
+        return;
+    }
+
     QMessageBox::information(qApp->activeWindow(), qApp->applicationName(), msg, QMessageBox::Ok, QMessageBox::Ok);
 }
 
 void warning(const QString& msg)
 {
+    if (Mock::isActive)
+    {
+        Mock::lastDialog = Mock::DialogKind::warning;
+        return;
+    }
+
     QMessageBox::warning(qApp->activeWindow(), qApp->applicationName(), msg, QMessageBox::Ok, QMessageBox::Ok);
 }
 
 void error(const QString& msg)
 {
+    if (Mock::isActive)
+    {
+        Mock::lastDialog = Mock::DialogKind::error;
+        return;
+    }
+
     QMessageBox::critical(qApp->activeWindow(), qApp->applicationName(), msg, QMessageBox::Ok, QMessageBox::Ok);
 }
 
 bool yes(const QString& msg)
 {
+    if (Mock::isActive)
+    {
+        Mock::lastDialog = Mock::DialogKind::yes;
+        return Mock::nextResult == QMessageBox::Yes;
+    }
+
     return (QMessageBox::question(qApp->activeWindow(), qApp->applicationName(), msg,
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes);
 }
 
 bool ok(const QString& msg)
 {
+    if (Mock::isActive)
+    {
+        Mock::lastDialog = Mock::DialogKind::ok;
+        return Mock::nextResult == QMessageBox::Ok;
+    }
+
     return (QMessageBox::question(qApp->activeWindow(), qApp->applicationName(), msg,
         QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel) == QMessageBox::Ok);
 }
 
 int yesNoCancel(const QString& msg)
 {
+    if (Mock::isActive)
+    {
+        Mock::lastDialog = Mock::DialogKind::yesNoCancel;
+        return Mock::nextResult;
+    }
+
     return QMessageBox::question(qApp->activeWindow(), qApp->applicationName(), msg,
         QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::Yes);
 }
 
 int yesNoCancel(QString& msg)
 {
+    if (Mock::isActive)
+    {
+        Mock::lastDialog = Mock::DialogKind::yesNoCancel;
+        return Mock::nextResult;
+    }
+
     return QMessageBox::question(qApp->activeWindow(), qApp->applicationName(), msg,
         QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::Yes);
 }
 
+//------------------------------------------------------------------------------
+//                         Ori::Dlg::InputTextEditor
+//------------------------------------------------------------------------------
+
+InputTextEditor::InputTextEditor(QWidget* parent) : QLineEdit(parent)
+{
+}
+
+QSize InputTextEditor::sizeHint() const
+{
+    auto s = QLineEdit::sizeHint();
+    s.setWidth(s.width() * _widthFactor);
+    return s;
+}
+
+//------------------------------------------------------------------------------
+//                            Ori::Dlg::inputText
+//------------------------------------------------------------------------------
+
 QString inputText(const QString& label, const QString& value)
 {
     bool ok;
-    QString text = QInputDialog::getText(qApp->activeWindow(), qApp->applicationName(),
-                                         label, QLineEdit::Normal, value, &ok);
+    QString text = inputText(label, value, &ok);
     return ok? text: QString();
 }
 
 QString inputText(const QString& label, const QString& value, bool *ok)
 {
-    return QInputDialog::getText(qApp->activeWindow(), qApp->applicationName(),
-                                 label, QLineEdit::Normal, value, ok);
+    auto newValue = value;
+
+    auto editor = new InputTextEditor();
+    editor->setText(value);
+    auto s = editor->size();
+    editor->resize(s.width() * 2, s.height());
+
+    QWidget content;
+    auto layout = new QVBoxLayout(&content);
+    layout->setMargin(0);
+    layout->addWidget(new QLabel(label));
+    layout->addWidget(editor);
+
+    *ok = Dialog(&content, false)
+            .withContentToButtonsSpacingFactor(2)
+            .exec();
+
+    if (*ok)
+        newValue = editor->text();
+
+    return newValue;
 }
+
+//------------------------------------------------------------------------------
 
 QString getSaveFileName(const QString& title, const QString& filter, const QString& defaultExt)
 {
@@ -81,6 +174,45 @@ QString getSaveFileName(const QString& title, const QString& filter, const QStri
     }
 
     return fileName;
+}
+
+//------------------------------------------------------------------------------
+//                        Ori::Dlg::showDialogWithPrompt
+//------------------------------------------------------------------------------
+
+bool showDialogWithPrompt(Qt::Orientation orientation, const QString& prompt, QWidget *widget, const QString& title, const QString &icon)
+{
+    auto oldParent = qobject_cast<QWidget*>(widget->parent());
+
+    QWidget content;
+    QBoxLayout *layout;
+    if (orientation == Qt::Vertical)
+        layout = new QVBoxLayout(&content);
+    else
+        layout = new QHBoxLayout(&content);
+    layout->setMargin(0);
+    layout->addWidget(new QLabel(prompt));
+    layout->addWidget(widget);
+    bool ok = Dialog(&content, false)
+            .withTitle(title)
+            .withIconPath(icon)
+            .withContentToButtonsSpacingFactor(2)
+            .exec();
+
+    // Restore parent to prevent the layout from deletion the widget
+    widget->setParent(oldParent);
+
+    return ok;
+}
+
+bool showDialogWithPromptH(const QString& prompt, QWidget *widget, const QString& title, const QString &icon)
+{
+    return showDialogWithPrompt(Qt::Horizontal, prompt, widget, title, icon);
+}
+
+bool showDialogWithPromptV(const QString& prompt, QWidget *widget, const QString& title, const QString &icon)
+{
+    return showDialogWithPrompt(Qt::Vertical, prompt, widget, title, icon);
 }
 
 //------------------------------------------------------------------------------
@@ -117,100 +249,11 @@ void setDlgIcon(QWidget *dlg, const QString &path)
 #endif
 }
 
-bool showDialog(QWidget *widget, const QString& title, const QString &icon)
-{
-    return showDialog(widget, widget, title, icon);
-}
-
-bool showDialog(QWidget *widget, QObject *receiver, const QString& title, const QString& icon)
-{
-    qDebug() << "This function is obsolete and should be removed. Please use features of Ori::Dlg::Dialog instead.";
-
-    if (!widget) return false;
-
-    auto oldParent = widget->parentWidget();
-
-    QDialog dlg(qApp->activeWindow());
-    setDlgTitle(&dlg, title);
-    setDlgIcon(&dlg, icon);
-    prepareDialog(&dlg, widget, receiver);
-    bool ok = show(&dlg);
-
-    // Restoring ownership prevent widget deletion together with layout
-    dlg.layout()->removeWidget(widget);
-    widget->setParent(oldParent);
-
-    return ok;
-}
-
-QBoxLayout* makePromptLayout(Qt::Orientation orientation)
-{
-    switch (orientation)
-    {
-    case Qt::Horizontal: return new QHBoxLayout;
-    case Qt::Vertical: return new QVBoxLayout;
-    default:
-        qCritical() << "Unsupported orientation" << orientation;
-        return nullptr;
-    }
-}
-
-bool showDialogWithPrompt(Qt::Orientation orientation, const QString& prompt, QWidget *widget, const QString& title, const QString &icon)
-{
-    return showDialogWithPrompt(orientation, prompt, widget, widget, title, icon);
-}
-
-bool showDialogWithPrompt(Qt::Orientation orientation, const QString& prompt, QWidget *widget, QObject * receiver, const QString& title, const QString& icon)
-{
-    qDebug() << "This function is obsolete and should be removed. Please use features of Ori::Dlg::Dialog instead.";
-
-    if (!widget) return false;
-
-    auto oldParent = widget->parentWidget();
-
-    auto layout = makePromptLayout(orientation);
-    if (!layout) return false;
-    layout->setMargin(0);
-    layout->addWidget(new QLabel(prompt));
-    layout->addWidget(widget);
-
-    QWidget w; w.setLayout(layout);
-    bool ok = showDialog(&w, receiver, title, icon);
-
-    // Restoring ownership prevent widget deletion together with layout
-    widget->setParent(oldParent);
-
-    return ok;
-}
-
-void prepareDialog(QDialog *dlg, QWidget *widget)
-{
-    prepareDialog(dlg, widget, widget);
-}
-
-void prepareDialog(QDialog *dlg, QWidget *widget, QObject *receiver)
-{
-    qDebug() << "This function is obsolete and should be removed. Please use features of Ori::Dlg::Dialog instead.";
-
-    if (!dlg || !widget) return;
-
-    auto buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    qApp->connect(buttons, SIGNAL(accepted()), dlg, SLOT(accept()));
-    qApp->connect(buttons, SIGNAL(rejected()), dlg, SLOT(reject()));
-    if (receiver)
-        qApp->connect(buttons, SIGNAL(accepted()), receiver, SLOT(apply()));
-
-    // We will have margins already in dialogLayout, these are excessed
-    if (widget->layout()) widget->layout()->setMargin(0);
-
-    auto dialogLayout = new QVBoxLayout(dlg);
-    dialogLayout->addWidget(widget);
-    dialogLayout->addWidget(buttons);
-}
-
+//------------------------------------------------------------------------------
+//                             Ori::Dlg::Dialog
 //------------------------------------------------------------------------------
 
-Dialog::Dialog(QWidget* content): _content(content)
+Dialog::Dialog(QWidget* content, bool ownContent): _content(content), _ownContent(ownContent)
 {
     _backupContentParent = _content->parentWidget();
 }
@@ -223,6 +266,7 @@ Dialog::~Dialog()
 bool Dialog::exec()
 {
     if (!_dialog) makeDialog();
+    if (_activeWidget) _activeWidget->setFocus();
     bool res = _dialog->exec() == QDialog::Accepted;
     if (!_ownContent)
     {
@@ -237,8 +281,15 @@ void Dialog::makeDialog()
 {
     // Dialog window
     _dialog = new QDialog(qApp->activeWindow());
+
+    auto flags = _dialog->windowFlags();
+    flags.setFlag(Qt::WindowContextHelpButtonHint, false);
+    _dialog->setWindowFlags(flags);
+
     setDlgTitle(_dialog, _title);
     setDlgIcon(_dialog, _iconPath);
+    if (!_initialSize.isEmpty())
+        _dialog->resize(_initialSize);
     QVBoxLayout* dialogLayout = new QVBoxLayout(_dialog);
 
     // Dialog content
@@ -274,11 +325,22 @@ void Dialog::makeDialog()
     qApp->connect(buttonBox, &QDialogButtonBox::rejected, _dialog, &QDialog::reject);
     if (_connectOkToContentApply)
         qApp->connect(_dialog, SIGNAL(accepted()), _content, SLOT(apply()));
+    for (auto signal: _okSignals)
+        qApp->connect(signal.first ? signal.first : _content, signal.second, _dialog, SLOT(accept()));
     if (!_helpTopic.isEmpty()) // TODO process help
         qApp->connect(buttonBox, &QDialogButtonBox::helpRequested, [this](){
             info(QString("TODO help by topic '%1'").arg(this->_helpTopic));
         });
     dialogLayout->addWidget(buttonBox);
+
+    for (auto button : buttonBox->buttons())
+        if (buttonBox->buttonRole(button) == QDialogButtonBox::AcceptRole)
+        {
+            _okButton = button;
+            break;
+        }
+
+    if (_onDlgReady) _onDlgReady();
 }
 
 void Dialog::acceptDialog()
@@ -293,6 +355,23 @@ void Dialog::acceptDialog()
         }
     }
     _dialog->accept();
+}
+
+QSize Dialog::size() const
+{
+    return _dialog ? _dialog->size() : QSize();
+}
+
+Dialog& Dialog::withOkSignal(const char* signal)
+{
+    _okSignals << QPair<QObject*, const char*>(nullptr, signal);
+    return *this;
+}
+
+Dialog& Dialog::withOkSignal(QObject* sender, const char* signal)
+{
+    _okSignals << QPair<QObject*, const char*>(sender, signal);
+    return *this;
 }
 
 } // namespace Dlg

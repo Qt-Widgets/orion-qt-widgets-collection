@@ -8,27 +8,27 @@
 #include <QDateTime>
 
 namespace Ori {
-namespace Test {
+namespace Testing {
 
-bool isTesting()
+inline bool isTesting()
 {
     return QApplication::arguments().contains("test");
 }
 
-bool noGui()
+inline bool noGui()
 {
     return QApplication::arguments().contains("nogui");
 }
 
-int runConsole(TestSuite tests)
+inline int runConsole(TestSuite tests)
 {
     TestLogger::enable(true);
-    TestSession session;
-    session.run(tests);
+    TestSession session(tests);
+    session.run();
     return 0;
 }
 
-int runWindow(QApplication& app, TestSuite tests)
+inline int runWindow(QApplication& app, TestSuite tests)
 {
     TestWindow w;
     w.setTests(tests);
@@ -36,7 +36,7 @@ int runWindow(QApplication& app, TestSuite tests)
     return app.exec();
 }
 
-int run(QApplication& app, TestSuite tests)
+inline int run(QApplication& app, TestSuite tests)
 {
     qsrand(QDateTime::currentDateTime().toTime_t());
 
@@ -44,11 +44,11 @@ int run(QApplication& app, TestSuite tests)
         ? runConsole(tests)
         : runWindow(app, tests);
 
-    free(tests);
+    qDeleteAll(tests);
     return result;
 }
 
-int run(QApplication& app, std::initializer_list<TestSuite> suites)
+inline int run(QApplication& app, std::initializer_list<TestSuite> suites)
 {
     TestSuite tests;
 
@@ -59,7 +59,7 @@ int run(QApplication& app, std::initializer_list<TestSuite> suites)
     return run(app, tests);
 }
 
-} // namespace Test
+} // namespace Testing
 } // namespace Ori
 
 #endif // ORI_TEST_MANAGER_H

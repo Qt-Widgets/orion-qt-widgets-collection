@@ -10,6 +10,10 @@
 
 namespace Ori {
 
+//------------------------------------------------------------------------------
+//                                MruList
+//------------------------------------------------------------------------------
+
 MruList::MruList(QObject *parent): QObject(parent)
 {
     _actionClearAll = new QAction(tr("Clear History"), this);
@@ -29,6 +33,7 @@ void MruList::append(const QString& item)
     else
         a = makeAction(item);
     _actions.prepend(a);
+    trimActions();
     update();
 }
 
@@ -62,8 +67,9 @@ void MruList::load(QSettings* settings, const QString& key)
     _settingGroup = settings->group();
     _settingsKey = key.isEmpty()? "mru": key;
     auto items = settings->value(_settingsKey).toStringList();
-    foreach (const QString& item, items)
-        _actions.append(makeAction(item));
+    for (const QString& item : items)
+        if (_maxCount < 0 || _actions.size() < _maxCount)
+            _actions.append(makeAction(item));
     update();
 }
 
@@ -153,7 +159,29 @@ QList<QAction*> MruList::invalidItems() const
     return list;
 }
 
-////////////////////////////////////////////////////////////////////////////////
+void MruList::setMaxCount(int value)
+{
+    _maxCount = value;
+    trimActions();
+}
+
+void MruList::trimActions()
+{
+    if (_maxCount < 0) return;
+    int prevCount = _actions.size();
+    while (_actions.size() > _maxCount)
+    {
+        auto a = _actions.last();
+        _actions.removeLast();
+        delete a;
+    }
+    if (prevCount != _actions.size())
+        emit changed();
+}
+
+//------------------------------------------------------------------------------
+//                               MruFileList
+//------------------------------------------------------------------------------
 
 bool MruFileList::sameItems(const QString& item1, const QString& item2) const
 {

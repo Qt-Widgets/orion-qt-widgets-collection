@@ -6,11 +6,8 @@
 #include <QDialogButtonBox>
 #include <QLabel>
 #include <QListWidget>
+#include <QPushButton>
 #include <QStackedWidget>
-
-// TODO configurable icon size
-#define PAGE_LIST_ICON_SIZE 24
-#define PAGE_LIST_ITEM_SIZE 30
 
 namespace Ori {
 namespace Dlg {
@@ -18,9 +15,12 @@ namespace Dlg {
 struct ConfigDialogState
 {
     int currentPageIndex;
+    QByteArray geometry;
 };
 
+namespace {
 QMap<QString, ConfigDialogState> __savedConfigDialogStates;
+}
 
 //------------------------------------------------------------------------------
 //                             BasicConfigDialog
@@ -32,7 +32,6 @@ BasicConfigDialog::BasicConfigDialog(QWidget* parent) : QDialog(parent)
     pageView = new QStackedWidget;
 
     pageList = new QListWidget();
-    pageList->setIconSize(QSize(PAGE_LIST_ICON_SIZE, PAGE_LIST_ICON_SIZE));
     connect(pageList, SIGNAL(currentRowChanged(int)), this, SLOT(pageListItemSelected(int)));
 
     // header
@@ -58,10 +57,13 @@ BasicConfigDialog::BasicConfigDialog(QWidget* parent) : QDialog(parent)
     connect(buttonBox, SIGNAL(accepted()), this, SLOT(accept()));
     connect(buttonBox, SIGNAL(rejected()), this, SLOT(reject()));
     connect(buttonBox, SIGNAL(helpRequested()), this, SLOT(showHelp()));
-    helpButton = (QWidget*)buttonBox->button(QDialogButtonBox::Help);
+    helpButton = qobject_cast<QWidget*>(buttonBox->button(QDialogButtonBox::Help));
 
     // main container
     QVBoxLayout *layoutMain = new QVBoxLayout;
+#ifdef Q_OS_MAC
+    layoutMain->setSpacing(12);
+#endif
     layoutMain->addLayout(layoutPages);
     layoutMain->addWidget(buttonBox);
     setLayout(layoutMain);
@@ -72,9 +74,22 @@ BasicConfigDialog::~BasicConfigDialog()
     storeState();
 }
 
+void BasicConfigDialog::setTitleAndIcon(const QString& title, const QString& iconPath)
+{
+    setWindowTitle(title);
+
+#ifndef Q_OS_MACOS
+    setWindowIcon(QIcon(iconPath));
+#else
+    // On MacOS dialog icon overrides app icon in the dock and it looks ugly.
+    Q_UNUSED(iconPath)
+#endif
+}
+
 void BasicConfigDialog::createPages(QList<QWidget*> pages)
 {
-    QSize itemSize(0, PAGE_LIST_ITEM_SIZE);
+    pageList->setIconSize(pageListIconSize);
+    QSize itemSize(0, pageListIconSize.height() + 2 * pageListSpacing);
     for (int i = 0; i < pages.length(); i++)
     {
         QWidget *page = pages.at(i);
@@ -101,6 +116,7 @@ void BasicConfigDialog::storeState()
     if (objectName().isEmpty()) return;
     ConfigDialogState state = {};
     state.currentPageIndex = currentPageIndex();
+    state.geometry = saveGeometry();
     __savedConfigDialogStates[objectName()] = state;
 }
 
@@ -109,9 +125,12 @@ bool BasicConfigDialog::restoreState()
     QString objectName = this->objectName();
     if (objectName.isEmpty()) return false;
     if (!__savedConfigDialogStates.contains(objectName)) return false;
-    int savedPageIndex = __savedConfigDialogStates[objectName].currentPageIndex;
+    auto state = __savedConfigDialogStates[objectName];
+    int savedPageIndex = state.currentPageIndex;
     if (savedPageIndex < 0 && savedPageIndex >= pageList->count()-1) return false;
     setCurrentPageIndex(savedPageIndex);
+    if (!state.geometry.isEmpty())
+        restoreGeometry(state.geometry);
     return true;
 }
 
@@ -130,7 +149,7 @@ void BasicConfigDialog::adjustPageList()
         }
     }
     QStyle* style = qApp->style();
-    max_width += PAGE_LIST_ICON_SIZE +
+    max_width += pageListIconSize.width() +
                  style->pixelMetric(QStyle::PM_ScrollBarExtent) +
                  style->pixelMetric(QStyle::PM_DefaultFrameWidth) * 2 +
                  style->pixelMetric(QStyle::PM_LayoutLeftMargin) +
@@ -148,7 +167,9 @@ void BasicConfigDialog::adjustHelpButton()
         BasicConfigPage* page = dynamic_cast<BasicConfigPage*>(pageView->widget(i));
         if (page && !page->helpTopic().isEmpty()) return;
     }
-    helpButton->setVisible(false);
+
+    if (helpTopic().isEmpty())
+        helpButton->setVisible(false);
 }
 
 int BasicConfigDialog::currentPageIndex() const
@@ -182,8 +203,9 @@ void BasicConfigDialog::accept()
 
 void BasicConfigDialog::showHelp()
 {
-    // TODO help system
-    qWarning() << "Page help topic:" << currentHelpTopic();
+    auto topic = currentHelpTopic();
+    if (!topic.isEmpty())
+        emit helpRequested(topic);
 }
 
 BasicConfigPage* BasicConfigDialog::currentPage() const
@@ -194,7 +216,7 @@ BasicConfigPage* BasicConfigDialog::currentPage() const
 QString BasicConfigDialog::currentHelpTopic() const
 {
     BasicConfigPage* page = currentPage();
-    return page? page->helpTopic(): QString();
+    return page? page->helpTopic(): helpTopic();
 }
 
 //------------------------------------------------------------------------------
@@ -218,6 +240,11 @@ void BasicConfigPage::add(std::initializer_list<QObject*> items)
 {
     for (auto item: items)
     {
+        if (item == &_stretchDummy)
+        {
+            _mainLayout->addStretch();
+            continue;
+        }
         auto widget = qobject_cast<QWidget*>(item);
         if (widget)
         {

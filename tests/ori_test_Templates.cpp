@@ -2,10 +2,10 @@
 #include "../core/OriTemplates.h"
 
 namespace Ori {
-namespace Test {
+namespace Tests {
 namespace TemplatesTests {
 
-////////////////////////////////////////////////////////////////////////////////
+//------------------------------------------------------------------------------
 
 class TestSingleton : public Singleton<TestSingleton>
 {
@@ -22,40 +22,59 @@ TEST_METHOD(singleton)
 
     auto ref = TestSingleton::instance();
     ASSERT_IS_FALSE(ref.constructed)
+
+    // This test can be run properly only once, by definition of singletion.
+    // But to avoid failing of second run we have to reset state to 'just created'.
+    ptr->constructed = true;
 }
 
-////////////////////////////////////////////////////////////////////////////////
+//------------------------------------------------------------------------------
 
 class TestListener
 {
 public:
-    void method() { notified = true; }
+    void listen() { notified = true; }
+    void listen1(int param) { notified = true, listenedParam = param; }
     bool notified = false;
+    int listenedParam = 0;
 };
 
-class TestNotifier : public Notifier<TestListener>
-{
-public:
-    void notify() { NOTIFY_LISTENERS(method); }
-};
-
-TEST_METHOD(notifier)
+TEST_METHOD(notifier_no_params)
 {
     TestListener listener;
-    TestNotifier notifier;
+    Notifier<TestListener> notifier;
 
     listener.notified = false;
     notifier.registerListener(&listener);
-    notifier.notify();
+    notifier.notify(&TestListener::listen);
     ASSERT_IS_TRUE(listener.notified)
 
     listener.notified = false;
     notifier.unregisterListener(&listener);
-    notifier.notify();
+    notifier.notify(&TestListener::listen);
     ASSERT_IS_FALSE(listener.notified)
 }
 
-////////////////////////////////////////////////////////////////////////////////
+TEST_METHOD(notifier_with_params)
+{
+    TestListener listener;
+    Notifier<TestListener> notifier;
+
+    listener.notified = false;
+    listener.listenedParam = 0;
+    notifier.registerListener(&listener);
+    notifier.notify(&TestListener::listen1, 10);
+    ASSERT_IS_TRUE(listener.notified)
+    ASSERT_EQ_INT(listener.listenedParam, 10)
+
+    listener.notified = false;
+    notifier.unregisterListener(&listener);
+    notifier.notify(&TestListener::listen1, 20);
+    ASSERT_IS_FALSE(listener.notified)
+    ASSERT_EQ_INT(listener.listenedParam, 10)
+}
+
+//------------------------------------------------------------------------------
 
 DECLARE_ENUM(TestEnum, 145, TestEnum_1, TestEnum_2, TestEnum_3)
 
@@ -92,7 +111,7 @@ TEST_METHOD(declare_enum)
     ASSERT_EQ_INT(val, TestEnum_1)
 }
 
-////////////////////////////////////////////////////////////////////////////////
+//------------------------------------------------------------------------------
 
 TEST_METHOD(breakable_block)
 {
@@ -134,16 +153,17 @@ TEST_METHOD(nested_breakable_block)
     ASSERT_EQ_INT(counter4, 1)
 }
 
-////////////////////////////////////////////////////////////////////////////////
+//------------------------------------------------------------------------------
 
 TEST_GROUP("Templates",
     ADD_TEST(singleton),
-    ADD_TEST(notifier),
+    ADD_TEST(notifier_no_params),
+    ADD_TEST(notifier_with_params),
     ADD_TEST(declare_enum),
     ADD_TEST(breakable_block),
     ADD_TEST(nested_breakable_block),
 )
 
 } // namespace TemplatesTests
-} // namespace Test
+} // namespace Tests
 } // namespace Ori

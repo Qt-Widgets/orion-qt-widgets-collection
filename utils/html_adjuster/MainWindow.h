@@ -22,16 +22,18 @@ public:
         Ori::Gui::setFontMonospace(&html);
         css.setTabStopWidth(24);
         html.setTabStopWidth(24);
+        css.setAcceptRichText(false);
+        html.setAcceptRichText(false);
 
         setObjectName("mainWindow");
         setOrientation(Qt::Horizontal);
 
         addWidget(Ori::Gui::widgetV({
-            Ori::Gui::layoutH({ new QLabel("<b>CSS</b>"), 0,
+            Ori::Gui::layoutH({ new QLabel("<b>CSS</b>"), nullptr,
                 Ori::Gui::button("Apply", this, SLOT(applyCss())) }), &css}));
 
         addWidget(Ori::Gui::splitterV(
-            Ori::Gui::widgetV({ Ori::Gui::layoutH({ new QLabel("<b>HTML</d>"), 0,
+            Ori::Gui::widgetV({ Ori::Gui::layoutH({ new QLabel("<b>HTML</d>"), nullptr,
                 Ori::Gui::button("Apply", this, SLOT(applyHtml())) }), &html }),
             Ori::Gui::widgetV({ new QLabel("<b>Browse</b>"), &browser })
         ));
@@ -59,6 +61,7 @@ private slots:
     void applyCss()
     {
         browser.document()->setDefaultStyleSheet(css.toPlainText());
+        browser.setHtml(html.toPlainText());
     }
 
     void applyHtml()

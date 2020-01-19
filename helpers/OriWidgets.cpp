@@ -53,14 +53,19 @@ void setFontSizePt(QWidget *w, int sizePt)
 void setFontMonospace(QWidget *w, int sizePt)
 {
     QFont f = w->font();
-#ifdef Q_OS_WIN
-    f.setPointSize(10);
+
+#if defined(Q_OS_WIN)
     f.setFamily("Courier New");
+    f.setPointSize(10);
+#elif defined(Q_OS_MAC)
+    f.setFamily("Monaco");
+    f.setPointSize(13);
 #else
     f.setFamily("monospace");
+    f.setPointSize(11);
 #endif
     if (sizePt > 0)
-        f.setPointSize(10);
+        f.setPointSize(sizePt);
     w->setFont(f);
 }
 
@@ -112,6 +117,15 @@ QToolButton* menuToolButton(QMenu* menu, QAction* action)
     button->setDefaultAction(action);
     button->setPopupMode(QToolButton::MenuButtonPopup);
     button->setMenu(menu);
+    return button;
+}
+
+QToolButton* iconToolButton(const QString& tooltip, const QString& iconPath, QObject* receiver, const char* slot)
+{
+    auto button = new QToolButton;
+    button->setToolTip(tooltip);
+    button->setIcon(QIcon(iconPath));
+    button->connect(button, SIGNAL(clicked()), receiver, slot);
     return button;
 }
 
@@ -225,6 +239,13 @@ void append(QToolBar* toolbar, QObject* item)
     if (action)
     {
         toolbar->addAction(action);
+        return;
+    }
+    auto group = qobject_cast<QActionGroup*>(item);
+    if (group)
+    {
+        for (auto action : group->actions())
+            toolbar->addAction(action);
         return;
     }
     auto widget = qobject_cast<QWidget*>(item);
@@ -353,12 +374,21 @@ QLabel* stretchedLabel(const QString& text)
 
 //--------------------------------------------------------------------------------------------------
 
-int layoutSpacing() { return qApp->style()->pixelMetric(QStyle::PM_LayoutHorizontalSpacing); }
+int layoutSpacing()
+{
+    int spacing = qApp->style()->pixelMetric(QStyle::PM_LayoutHorizontalSpacing);
+    // MacOS's style "macintosh" has spacing -1, sic!
+    // It is not what we want adjusting widgets using layoutSpacing()
+    // Fusion style gets 6 and it's most reasonable style in Qt
+    if (spacing < 0) spacing = 6;
+    return spacing;
+}
+
 int borderWidth() { return qApp->style()->pixelMetric(QStyle::PM_DefaultFrameWidth); }
 
 //--------------------------------------------------------------------------------------------------
 
-QGroupBox* group(const QString& title, QBoxLayout* layout)
+QGroupBox* group(const QString& title, QLayout *layout)
 {
     auto group = new QGroupBox(title);
     group->setLayout(layout);
@@ -403,6 +433,16 @@ QPushButton* button(const QString& title, QObject *receiver, const char* slot)
     return button;
 }
 
+QPushButton* iconButton(const QString& tooltip, const QString& iconPath, QObject* receiver, const char* slot, bool flat)
+{
+    auto button = new QPushButton;
+    button->setIcon(QIcon(iconPath));
+    button->setToolTip(tooltip);
+    button->connect(button, SIGNAL(clicked(bool)), receiver, slot);
+    button->setFlat(flat);
+    return button;
+}
+
 //--------------------------------------------------------------------------------------------------
 
 void setSelectedId(QComboBox *combo, int id)
@@ -427,11 +467,31 @@ int getSelectedId(const QComboBox *combo, int def)
 
 //--------------------------------------------------------------------------------------------------
 
+// Guesses a descriptive text suited for the menu entry.
+// This is equivalent to QAction's internal qt_strippedText().
+static QString strippedActionTitle(QString s) {
+    s.remove(QString::fromLatin1("..."));
+    for (int i = 0; i < s.size(); ++i)
+        if (s.at(i) == QLatin1Char('&'))
+            s.remove(i, 1);
+    return s.trimmed();
+}
+
+// Adds shortcut information to the action's tooltip.
+// Here is more complete solution supporting custom tooltips
+// https://stackoverflow.com/questions/42607554/show-shortcut-in-tooltip-of-qtoolbar
+static void setActionShortcut(QAction* action, const QKeySequence& shortcut)
+{
+    action->setShortcut(shortcut);
+    action->setToolTip(QStringLiteral("<p style='white-space:pre'>%1&nbsp;&nbsp;(<code>%2</code>)</p>")
+                       .arg(strippedActionTitle(action->text()), shortcut.toString(QKeySequence::NativeText)));
+}
+
 QAction* action(const QString& title, QObject* receiver, const char* slot, const char* icon, const QKeySequence& shortcut)
 {
     auto action = new QAction(title, receiver);
-    action->setShortcut(shortcut);
-    if (icon) action->setIcon(QPixmap(icon));
+    if (!shortcut.isEmpty()) setActionShortcut(action, shortcut);
+    if (icon) action->setIcon(QIcon(icon));
     qApp->connect(action, SIGNAL(triggered()), receiver, slot);
     return action;
 }
@@ -439,20 +499,11 @@ QAction* action(const QString& title, QObject* receiver, const char* slot, const
 QAction* toggledAction(const QString& title, QObject* receiver, const char* slot, const char* icon, const QKeySequence& shortcut)
 {
     auto action = new QAction(title, receiver);
-    action->setShortcut(shortcut);
     action->setCheckable(true);
-    if (icon) action->setIcon(QPixmap(icon));
+    if (!shortcut.isEmpty()) setActionShortcut(action, shortcut);
+    if (icon) action->setIcon(QIcon(icon));
     if (slot) qApp->connect(action, SIGNAL(toggled(bool)), receiver, slot);
     return action;
-}
-
-//--------------------------------------------------------------------------------------------------
-
-QTextBrowser* logView(int sizePt)
-{
-    auto log = new QTextBrowser;
-    setFontMonospace(log, sizePt);
-    return log;
 }
 
 //--------------------------------------------------------------------------------------------------

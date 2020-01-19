@@ -1,39 +1,34 @@
 #include "OriTestBase.h"
 
+#include <QApplication>
 #include <QDateTime>
+#include <QDebug>
 #include <QFile>
 #include <QStringList>
 #include <QTextStream>
 
 namespace Ori {
-namespace Test {
-
-void free(const TestSuite& tests)
-{
-    for (auto t : tests) delete t;
-}
+namespace Testing {
 
 TestGroup* asGroup(TestBase* test)
 {
     return dynamic_cast<TestGroup*>(test);
 }
 
-////////////////////////////////////////////////////////////////////////////////
+//------------------------------------------------------------------------------
+//                                 TestLogger
+//------------------------------------------------------------------------------
 
 bool TestLogger::_enabled = false;
 
 void TestLogger::reset()
 {
-    if (!enabled()) return;
-
     if (QFile::exists(fileName()))
         QFile::remove(fileName());
 }
 
 void TestLogger::write(const QString& msg)
 {
-    if (!enabled()) return;
-
     QFile file(fileName());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Append))
         return;
@@ -44,7 +39,12 @@ void TestLogger::write(const QString& msg)
     file.close();
 }
 
-////////////////////////////////////////////////////////////////////////////////
+#define TEST_LOGGER(str) if (TestLogger::enabled()) TestLogger::write(str)
+
+//------------------------------------------------------------------------------
+//                                 TestSession
+//------------------------------------------------------------------------------
+
 // *************** SESSION ***************
 // STAT: tests: 99, passed: 99, failed: 99
 // ***************** END ******************
@@ -53,106 +53,246 @@ void TestLogger::write(const QString& msg)
 // *************** PASSED *****************
 // *************** FAILED *****************
 
-TestSession::TestSession()
+TestSession::TestSession(const TestSuite& tests): _tests(tests)
 {
-    TestLogger::reset();
-    TestLogger::write(QString("*************** SESSION ***************\nStarted at %1\n")
-                      .arg(QDateTime::currentDateTime().toString()));
+    if (TestLogger::enabled())
+        TestLogger::reset();
 
-    _testsRun = 0;
-    _testsFail = 0;
-    _testsPass = 0;
+    TEST_LOGGER(QString("*************** SESSION ***************\n"
+                        "Started at %1\n")
+                      .arg(QDateTime::currentDateTime().toString()));
 }
 
 TestSession::~TestSession()
 {
-    TestLogger::write(QString("STAT: tests: %1, passed: %2, failed: %3\n"
-                              "***************** END ******************")
+    TEST_LOGGER(QString("STAT: tests: %1, passed: %2, failed: %3\n"
+                        "***************** END ******************\n")
                       .arg(_testsRun).arg(_testsPass).arg(_testsFail));
 }
 
-void TestSession::run(const TestSuite &tests)
+void TestSession::run()
 {
-    foreach (TestBase *test, tests)
-        run(test);
+    _testsRun = 0;
+    _testsFail = 0;
+    _testsPass = 0;
+
+    for (auto test : _tests)
+    {
+        test->reset();
+
+        auto parentGroup = asGroup(test->parent());
+        if (parentGroup)
+        {
+            if (parentGroup->_beforeAll)
+                parentGroup->_beforeAll->reset();
+            if (parentGroup->_afterAll)
+                parentGroup->_afterAll->reset();
+        }
+    }
+
+    runGroup(_tests);
+
+    if (emitSignals) emit sessionFinished();
 }
 
-void TestSession::run(TestBase *test)
+void TestSession::runGroup(const TestSuite& tests)
 {
-    test->reset();
+    int count = tests.size();
+    for (int i = 0; i < count; i++)
+        runTest(tests.at(i), i == count-1);
+}
 
-    TestGroup *group = dynamic_cast<TestGroup*>(test);
-    if (!group)
+void TestSession::runTest(TestBase *test, bool isLastInGroup)
+{
+    TestGroup *parentGroup = asGroup(test->parent());
+
+    if (parentGroup and parentGroup->_beforeAll)
     {
-        TestLogger::write(QString("**************** TEST ******************\n%1")
-                          .arg(test->path()));
+        if (parentGroup->_beforeAll->result() == TestResult::None)
+        {
+            parentGroup->_beforeAll->runTest();
+            if (!parentGroup->log().isEmpty())
+                parentGroup->logMessage("---------------");
+        }
+        if (parentGroup->_beforeAll->result() != TestResult::Pass)
+            return;
+    }
+
+    TestGroup *group = asGroup(test);
+    if (group)
+    {
+        notifyTestRunning(group);
+
+        runGroup(group->tests());
+
+        notifyTestFinished(group);
+    }
+    else
+    {
+        notifyTestRunning(test);
 
         _testsRun++;
 
-        test->run();
+        bool runTest = true;
+        if (parentGroup and parentGroup->_beforeEach)
+        {
+            parentGroup->_beforeEach->reset();
+            parentGroup->_beforeEach->run();
+            if (parentGroup->_beforeEach->result() == TestResult::Fail)
+            {
+                runTest = false;
+                test->setResult(false);
+                test->setMessage(QStringLiteral("BEFORE_EACH: %1").arg(parentGroup->_beforeEach->message()));
+            }
+            if (!parentGroup->_beforeEach->log().isEmpty())
+            {
+                test->logMessage(QStringLiteral("---------------"));
+                test->logMessage(QStringLiteral("BEFORE_EACH:"));
+                test->logMessage(parentGroup->_beforeEach->log());
+                test->logMessage(QStringLiteral("---------------"));
+            }
+        }
 
-        if (test->result())
-            _testsPass++;
-        else
-            _testsFail++;
+        if (runTest)
+        {
+            test->runTest();
 
-        TestLogger::write(QString("*************** %1 *****************\n")
-                          .arg(test->result()? "PASSED": "FAILED"));
+            if (parentGroup and parentGroup->_afterEach)
+            {
+                parentGroup->_afterEach->reset();
+                parentGroup->_afterEach->run();
+                if (parentGroup->_afterEach->result() == TestResult::Fail)
+                {
+                    test->setResult(false);
+                    if (test->message().isEmpty())
+                        test->setMessage(QStringLiteral("AFTER_EACH: %1").arg(parentGroup->_afterEach->message()));
+                    else
+                        test->logMessage(QStringLiteral("AFTER_EACH: %1").arg(parentGroup->_afterEach->message()));
+                }
+                if (!parentGroup->_afterEach->log().isEmpty())
+                {
+                    test->logMessage(QStringLiteral("---------------"));
+                    test->logMessage(QStringLiteral("AFTER_EACH:"));
+                    test->logMessage(parentGroup->_afterEach->log());
+                    test->logMessage(QStringLiteral("---------------"));
+                }
+            }
+        }
+
+        switch (test->result())
+        {
+        case TestResult::Pass: _testsPass++; break;
+        case TestResult::Fail: _testsFail++; break;
+        default: break;
+        }
+
+        notifyTestFinished(test);
     }
-    else
-        run(group->tests());
+
+    if (parentGroup and parentGroup->_afterAll and isLastInGroup)
+        parentGroup->_afterAll->runTest();
 }
 
-////////////////////////////////////////////////////////////////////////////////
+void TestSession::notifyTestRunning(TestBase* test)
+{
+    if (TestLogger::enabled())
+    {
+        if (test->kind() == TestKind::Group)
+            TestLogger::write(QStringLiteral("################ GROUP ################\n%1\n").arg(test->path()));
+        else
+            TestLogger::write(QStringLiteral("**************** TEST ******************\n%1\n").arg(test->path()));
+    }
 
-TestGroup::TestGroup(const char *name, std::initializer_list<TestBase*> args) : TestGroup(name)
+    if (emitSignals)
+        emit testRunning(test);
+}
+
+void TestSession::notifyTestFinished(TestBase* test)
+{
+    if (emitSignals)
+        emit testFinished(test);
+
+    if (test->kind() == TestKind::Test)
+    {
+        switch (test->result())
+        {
+        case TestResult::Pass:
+            TEST_LOGGER(QStringLiteral("*************** PASSED *****************\n"));
+            break;
+        case TestResult::Fail:
+            TEST_LOGGER(QStringLiteral("*************** FAILED *****************\n"));
+            break;
+        case TestResult::None:
+            TEST_LOGGER(QStringLiteral("*************** UNKNOWN *****************\n"));
+            break;
+        }
+    }
+}
+
+int TestSession::countTestsInGroup(const TestSuite& tests) const
+{
+    int count = 0;
+    for (auto test : tests)
+    {
+        switch (test->kind())
+        {
+        case TestKind::Test:
+            count++;
+            break;
+        case TestKind::Group:
+            count += countTestsInGroup(asGroup(test)->tests());
+            break;
+        default:
+            break;
+        }
+    }
+    return count;
+}
+
+//------------------------------------------------------------------------------
+//                                 TestGroup
+//------------------------------------------------------------------------------
+
+TestGroup::TestGroup(const char *name, std::initializer_list<TestBase*> args)
+    : TestBase(name, nullptr, TestKind::Group)
 {
     for (auto arg : args) append(arg);
 }
 
-TestGroup* TestGroup::create(const char *name, ...)
-{
-    TestGroup *group = new TestGroup(name);
-
-    TestBase *test;
-    va_list tests;
-    va_start(tests, name);
-    test = va_arg(tests, TestBase*);
-    while (test)
-    {
-        group->append(test);
-        test = va_arg(tests, TestBase*);
-    }
-    va_end(tests);
-
-    return group;
-}
-
 void TestGroup::append(TestBase *test)
 {
-    _tests << test;
+    switch (test->kind())
+    {
+    case TestKind::BeforeAll: _beforeAll = test; break;
+    case TestKind::AfterAll: _afterAll = test; break;
+    case TestKind::BeforeEach: _beforeEach = test; break;
+    case TestKind::AfterEach: _afterEach = test; break;
+    default: _tests.push_back(test); break;
+    }
     test->_parent = this;
 }
 
-void TestGroup::run()
+void TestGroup::reset()
 {
-    reset();
-    foreach (TestBase *test, _tests)
-    {
+    TestBase::reset();
+
+    for (auto test : _tests)
         test->reset();
-        test->run();
-    }
+
+    if (_beforeAll) _beforeAll->reset();
+    if (_afterAll) _afterAll->reset();
+    if (_beforeEach) _beforeEach->reset();
+    if (_afterEach) _afterEach->reset();
 }
 
-////////////////////////////////////////////////////////////////////////////////
+//------------------------------------------------------------------------------
+//                                 TestBase
+//------------------------------------------------------------------------------
 
-TestBase::TestBase(const char *name, TestMethod method)
-{
-    _result = true;
-    _parent = NULL;
-    _name = name;
-    _method = method;
-}
+TestBase::TestBase(const char *name, TestMethod method, TestKind kind)
+    : _name(name), _method(method), _kind(kind) {}
+
+TestBase::~TestBase() {}
 
 QString TestBase::path() const
 {
@@ -164,25 +304,81 @@ QString TestBase::path() const
     return path;
 }
 
-void TestBase::setResult(bool value)
+void TestBase::setResult(bool pass)
 {
-    _result = value;
+    auto res = pass ? TestResult::Pass : TestResult::Fail;
+    if (_result == res) return;
+    _result = res;
+
     if (_parent)
-        _parent->setResult(_parent->result() && value);
+    {
+        if (_parent->result() == TestResult::None)
+            _parent->setResult(pass);
+        else if (!pass)
+            _parent->setResult(false);
+
+        if (!pass)
+        {
+            switch (_kind)
+            {
+            case TestKind::Test:
+            case TestKind::Group:
+                if (_parent->message().isEmpty())
+                    _parent->setMessage(QStringLiteral("Some of children tests failed"));
+                break;
+            default:
+                break;
+            }
+        }
+    }
+}
+
+void TestBase::setMessage(const QString& msg)
+{
+    _message = msg;
+
+    if (_parent)
+    {
+        if (_kind == TestKind::BeforeAll)
+            _parent->setMessage(QStringLiteral("BEFORE_ALL: %1").arg(msg));
+        else if (_kind == TestKind::AfterAll)
+        {
+            if (_parent->message().isEmpty())
+                _parent->setMessage(QStringLiteral("AFTER_ALL: %1").arg(msg));
+            else
+                _parent->logMessage(QStringLiteral("AFTER_ALL: %1").arg(msg));
+        }
+    }
 }
 
 void TestBase::reset()
 {
-    _result = true;
+    _result = TestResult::None;
     _message.clear();
     _log.clear();
+}
+
+void TestBase::runTest()
+{
+    run();
+
+    // Assertions only assign Fail result
+    if (_result != TestResult::Fail)
+        setResult(true);
+}
+
+void TestBase::run()
+{
+    if (_method)
+        _method(this);
 }
 
 void TestBase::logAssertion(const QString& assertion, const QString& condition,
                             const QString& expected, const QString& actual,
                             const QString &file, int line)
 {
-    logMessage(QString("Assertion : %1\n"
+    auto msg = QStringLiteral
+                      ("Assertion : %1\n"
                        "Condition : %2\n"
                        "Expected  : %3\n"
                        "Actual    : %4\n"
@@ -192,19 +388,38 @@ void TestBase::logAssertion(const QString& assertion, const QString& condition,
                     .arg(expected)
                     .arg(actual)
                     .arg(file)
-                    .arg(line));
+                    .arg(line);
+
+    if (_parent)
+    {
+        if (_kind == TestKind::BeforeAll)
+            _parent->logMessage(QString("BEFORE_ALL: Assertion:\n%2").arg(msg));
+        else if (_kind == TestKind::AfterAll)
+            _parent->logMessage(QString("AFTER_ALL: Assertion:\n%2").arg(msg));
+        else _log.append(msg);
+    }
+    else _log.append(msg);
 }
 
 void TestBase::logMessage(const QString& msg)
 {
-    TestLogger::write(msg);
-    _log += msg + "\n";
+    TEST_LOGGER(msg);
+
+    if (_parent)
+    {
+        if (_kind == TestKind::BeforeAll)
+            _parent->logMessage(QString("BEFORE_ALL: %2").arg(msg));
+        else if (_kind == TestKind::AfterAll)
+            _parent->logMessage(QString("AFTER_ALL: %2").arg(msg));
+        else _log.append(msg);
+    }
+    else _log.append(msg);
 }
 
 void TestBase::logMessage(const QStringList& list)
 {
-    foreach (const QString& s, list) logMessage(s);
+    for (auto s : list) logMessage(s);
 }
 
-} // namespace Test
+} // namespace Tests
 } // namespace Ori

@@ -1,4 +1,5 @@
 #include "OriTestBase.h"
+#include "OriTimeMeter.h"
 
 #include <QApplication>
 #include <QDateTime>
@@ -29,6 +30,11 @@ void TestLogger::reset()
 
 void TestLogger::write(const QString& msg)
 {
+    // TODO: Such open-write-close logging slows down the test execution
+    // (e.g. a session finishes in 4s without logs and in 24s with logs).
+    // Should be replaced with writing into memory buffer
+    // but concern is we won't see any logs if test session crashes
+    // so it might be better to move file writing in a separate thread
     QFile file(fileName());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Append))
         return;
@@ -66,8 +72,12 @@ TestSession::TestSession(const TestSuite& tests): _tests(tests)
 TestSession::~TestSession()
 {
     TEST_LOGGER(QString("STAT: tests: %1, passed: %2, failed: %3\n"
+                        "Summary tests duration: %4\n"
+                        "Total session duration: %5\n"
                         "***************** END ******************\n")
-                      .arg(_testsRun).arg(_testsPass).arg(_testsFail));
+                      .arg(_testsRun).arg(_testsPass).arg(_testsFail)
+                      .arg(formatDuration(_testsDuration),
+                           formatDuration(_sessionDuration)));
 }
 
 void TestSession::run()
@@ -75,8 +85,13 @@ void TestSession::run()
     _testsRun = 0;
     _testsFail = 0;
     _testsPass = 0;
+    _sessionDuration = 0;
+    _testsDuration = 0;
+    _stopRequested = false;
 
-    for (auto test : _tests)
+    TimeMeter tm;
+
+    foreach (auto test, _tests)
     {
         test->reset();
 
@@ -92,6 +107,8 @@ void TestSession::run()
 
     runGroup(_tests);
 
+    _sessionDuration = tm.stop();
+
     if (emitSignals) emit sessionFinished();
 }
 
@@ -99,7 +116,12 @@ void TestSession::runGroup(const TestSuite& tests)
 {
     int count = tests.size();
     for (int i = 0; i < count; i++)
+    {
         runTest(tests.at(i), i == count-1);
+
+        if (_stopRequested)
+            return;
+    }
 }
 
 void TestSession::runTest(TestBase *test, bool isLastInGroup)
@@ -185,6 +207,9 @@ void TestSession::runTest(TestBase *test, bool isLastInGroup)
         case TestResult::Fail: _testsFail++; break;
         default: break;
         }
+
+        _testsDuration += test->duration();
+        TEST_LOGGER(QStringLiteral("Executed in %1").arg(formatDuration(test->duration())));
 
         notifyTestFinished(test);
     }
@@ -276,13 +301,21 @@ void TestGroup::reset()
 {
     TestBase::reset();
 
-    for (auto test : _tests)
+    foreach (auto test, _tests)
         test->reset();
 
     if (_beforeAll) _beforeAll->reset();
     if (_afterAll) _afterAll->reset();
     if (_beforeEach) _beforeEach->reset();
     if (_afterEach) _afterEach->reset();
+}
+
+int64_t TestGroup::duration() const
+{
+    int64_t total = 0;
+    for (auto test : _tests)
+        total += test->duration();
+    return total;
 }
 
 //------------------------------------------------------------------------------
@@ -353,14 +386,20 @@ void TestBase::setMessage(const QString& msg)
 
 void TestBase::reset()
 {
+    _duration_ns = 0;
     _result = TestResult::None;
+    _data.clear();
     _message.clear();
     _log.clear();
 }
 
 void TestBase::runTest()
 {
+    TimeMeter tm;
+
     run();
+
+    _duration_ns = tm.stop();
 
     // Assertions only assign Fail result
     if (_result != TestResult::Fail)
@@ -377,25 +416,20 @@ void TestBase::logAssertion(const QString& assertion, const QString& condition,
                             const QString& expected, const QString& actual,
                             const QString &file, int line)
 {
-    auto msg = QStringLiteral
-                      ("Assertion : %1\n"
-                       "Condition : %2\n"
-                       "Expected  : %3\n"
-                       "Actual    : %4\n"
-                       "Location  : %5:%6\n")
-                    .arg(assertion)
-                    .arg(condition)
-                    .arg(expected)
-                    .arg(actual)
-                    .arg(file)
-                    .arg(line);
+    QString msg;
+    QTextStream stream(&msg);
+    stream << "Assertion : " << assertion << '\n'
+           << "Condition : " << condition << '\n'
+           << "Expected  : " << expected << '\n'
+           << "Actual    : " << actual << '\n'
+           << "Location  : " << file << ':' << line << '\n';
 
     if (_parent)
     {
         if (_kind == TestKind::BeforeAll)
-            _parent->logMessage(QString("BEFORE_ALL: Assertion:\n%2").arg(msg));
+            _parent->logMessage(QString("BEFORE_ALL: Assertion:\n%1").arg(msg));
         else if (_kind == TestKind::AfterAll)
-            _parent->logMessage(QString("AFTER_ALL: Assertion:\n%2").arg(msg));
+            _parent->logMessage(QString("AFTER_ALL: Assertion:\n%1").arg(msg));
         else _log.append(msg);
     }
     else _log.append(msg);
@@ -408,9 +442,9 @@ void TestBase::logMessage(const QString& msg)
     if (_parent)
     {
         if (_kind == TestKind::BeforeAll)
-            _parent->logMessage(QString("BEFORE_ALL: %2").arg(msg));
+            _parent->logMessage(QString("BEFORE_ALL: %1").arg(msg));
         else if (_kind == TestKind::AfterAll)
-            _parent->logMessage(QString("AFTER_ALL: %2").arg(msg));
+            _parent->logMessage(QString("AFTER_ALL: %1").arg(msg));
         else _log.append(msg);
     }
     else _log.append(msg);
@@ -418,7 +452,7 @@ void TestBase::logMessage(const QString& msg)
 
 void TestBase::logMessage(const QStringList& list)
 {
-    for (auto s : list) logMessage(s);
+    foreach (const auto& s, list) logMessage(s);
 }
 
 } // namespace Tests

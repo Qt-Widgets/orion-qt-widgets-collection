@@ -28,7 +28,7 @@ class TestWindow : public QMainWindow
 
 public:
     explicit TestWindow(QWidget *parent = nullptr);
-    ~TestWindow();
+    ~TestWindow() override;
 
     void setTests(const TestSuite& tests);
 
@@ -38,26 +38,34 @@ signals:
 private:
     enum StatusInfoKind
     {
-        CountTotal,
-        CountRun,
-        CountPass,
-        CountFail
+        COUNT_TOTAL,
+        COUNT_RUN,
+        COUNT_PASS,
+        COUNT_FAIL,
     };
     enum TestState
     {
-        TestUnknown,
-        TestRunning,
-        TestSuccess,
-        TestFail
+        TEST_UNKNOWN,
+        TEST_RUNNING,
+        TEST_SUCCESS,
+        TEST_FAIL
+    };
+    enum TreeColumns {
+        COL_NAME,
+        COL_DURATION,
+        COL_MESSAGE,
+        COL_COUNT
     };
 
-    QAction *_actionRunAll, *_actionRunSelected, *_actionResetState, *_actionSaveLog;
-    QLabel *labelTotal, *labelRun, *labelPass, *labelFail;
+    QAction *_actionRunAll, *_actionRunSelected, *_actionResetState, *_actionSaveLog, *_actionStop;
+    QLabel *labelTotal, *labelRun, *labelPass, *labelFail, *labelDuration;
     QTreeWidget *testsTree;
     QPlainTextEdit *testLog;
     QProgressBar *progress;
     QMap<TestBase*, QTreeWidgetItem*> testItems;
-    QThread* _sessionThread  = nullptr;
+    QThread* _sessionThread = nullptr;
+    QTimer* _stopTimer = nullptr;
+    int _stopTries = 0;
     TestSession* _session = nullptr;
     int testsTotal;
 
@@ -65,6 +73,7 @@ private:
     void resetState(QTreeWidgetItem *root);
     void setState(QTreeWidgetItem *item, TestState state);
     void setStatusInfo(StatusInfoKind kind, int value);
+    void setStatusDuration(int64_t tests, int64_t session);
     void runTestSession(QList<QTreeWidgetItem *> items);
     void runTest(QTreeWidgetItem *item, TestSession &session, bool isLastInGroup);
     TestBase* getTest(QTreeWidgetItem *item);
@@ -80,6 +89,8 @@ private slots:
     void runAll();
     void runSelected();
     void resetState();
+    void stopExecution();
+    void stopTimerTick();
     void showItemLog(QTreeWidgetItem *item);
 };
 

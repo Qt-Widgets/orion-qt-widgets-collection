@@ -22,7 +22,7 @@ InfoPanel::InfoPanel(QWidget *parent) : QFrame(parent)
     _labelDescr->setForegroundRole(QPalette::Text);
 
     QVBoxLayout *layoutDescr = new QVBoxLayout;
-    layoutDescr->setMargin(0);
+    layoutDescr->setContentsMargins(0, 0, 0, 0);
     layoutDescr->setSpacing(6);
     layoutDescr->addWidget(_labelTitle);
     layoutDescr->addWidget(_labelDescr);
@@ -48,6 +48,16 @@ void InfoPanel::setInfo(const QString& text)
 {
     _labelTitle->setVisible(false);
     _labelDescr->setText(text);
+}
+
+void InfoPanel::setMargin(int value)
+{
+    qobject_cast<QBoxLayout*>(layout())->setContentsMargins(value, value, value, value);
+}
+
+void InfoPanel::setSpacing(int value)
+{
+    qobject_cast<QBoxLayout*>(layout())->setSpacing(value);
 }
 
 } // namespace Widgets

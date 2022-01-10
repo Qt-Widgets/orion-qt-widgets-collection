@@ -116,9 +116,22 @@ QAbstractButton* OptionsGroup::getOption(int id) const
     if (!_options.contains(id))
     {
         qCritical() << "There is no option with id" << id;
-        return NULL;
+        return nullptr;
     }
     return _options[id];
+}
+
+void OptionsGroup::addControls(std::initializer_list<QObject*> controls)
+{
+    for (auto control : controls)
+    {
+        auto layout = qobject_cast<QLayout*>(control);
+        if (layout)
+            qobject_cast<QVBoxLayout*>(this->layout())->addLayout(layout);
+        auto widget = qobject_cast<QWidget*>(control);
+        if (widget)
+            this->layout()->addWidget(widget);
+    }
 }
 
 } // namespace Widgets

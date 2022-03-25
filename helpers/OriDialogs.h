@@ -72,11 +72,13 @@ bool showDialogWithPromptV(const QString& prompt, QWidget *widget, const QString
 
 bool show(QDialog* dlg);
 
+
 /// Shows a content in a dialog with 'OK', 'Cancel' and optional 'Help' buttons at bottom.
 class Dialog
 {
 public:
     typedef std::function<QString()> VerificationFunc;
+    typedef std::function<void()> HandlerFunc;
 
     Dialog(QWidget* content, bool ownContent);
     ~Dialog();
@@ -91,6 +93,9 @@ public:
     /// Space is set as amount of default layout spacings.
     Dialog& withContentToButtonsSpacingFactor(int factor) { _contentToButtonsSpacingFactor = factor; return *this; }
 
+    /// Don't create default layout margins around provided content
+    Dialog& withSkipContentMargins() { _skipContentMargins = true; return *this; }
+
     /// Content is placed in dialog alongside with a prompt in horizontal layout.
     Dialog& withHorizontalPrompt(const QString& prompt) { _prompt = prompt; _isPromptVertical = false; return *this; }
 
@@ -100,8 +105,14 @@ public:
     /// Widget should have slot apply() to process OK button click.
     Dialog& connectOkToContentApply() { _connectOkToContentApply = true; return *this; }
 
-    Dialog& withOkSignal(const char* signal);
-    Dialog& withOkSignal(QObject* sender, const char* signal);
+    /// The same as withAcceptSignal, deprecated.
+    Dialog& withOkSignal(const char* signal) { return withAcceptSignal(signal); }
+    Dialog& withOkSignal(QObject* sender, const char* signal) { return withAcceptSignal(sender, signal); }
+
+    /// A signal that must trigger the dialog's accept method.
+    /// This way a content can accept the dialog.
+    Dialog& withAcceptSignal(const char* signal);
+    Dialog& withAcceptSignal(QObject* sender, const char* signal);
 
     Dialog& withVerification(VerificationFunc verify) { _verify = verify; return *this; }
 
@@ -109,8 +120,20 @@ public:
 
     Dialog& withActiveWidget(QWidget* w) { _activeWidget = w; return *this; }
 
-    Dialog& withOnDlgReady(std::function<void()> handler) { _onDlgReady = handler; return *this; }
-    Dialog& withOnHelp(std::function<void()> handler) { _onHelpRequested = handler; return *this; }
+    /// A handler that is called when the dialog is ready but yet shown.
+    Dialog& withOnDlgReady(HandlerFunc handler) { _onDlgReady = handler; return *this; }
+
+    /// A handler that is called when the Help button pressed.
+    /// The Help button is not shown if this hander is not provided.
+    Dialog& withOnHelp(HandlerFunc handler) { _onHelpRequested = handler; return *this; }
+
+    /// A handler that is called when the Apply button pressed.
+    /// The Apply button is not shown if this hander is not provided.
+    Dialog& withOnApply(HandlerFunc handler) { _applyHandler = handler; return *this; }
+
+    /// If the id is provided then the dialog size will be stored in memory
+    /// after dialog was closed and then restored on the next run.
+    Dialog& withPersistenceId(const QString& id) { _persistenceId = id; return *this; }
 
     bool exec();
 
@@ -127,14 +150,17 @@ private:
     bool _fixedContentSize = true;
     int _contentToButtonsSpacingFactor = 1;
     bool _connectOkToContentApply = false;
-    QVector<QPair<QObject*, const char*>> _okSignals;
+    QVector<QPair<QObject*, const char*>> _acceptSignals;
     bool _isPromptVertical = false;
     VerificationFunc _verify;
     QSize _initialSize;
     QWidget* _activeWidget = nullptr;
     QAbstractButton* _okButton = nullptr;
-    std::function<void()> _onDlgReady;
-    std::function<void()> _onHelpRequested;
+    HandlerFunc _onDlgReady;
+    HandlerFunc _onHelpRequested;
+    HandlerFunc _applyHandler;
+    QString _persistenceId;
+    bool _skipContentMargins = false;
 
     void makeDialog();
     void acceptDialog();
